@@ -1,0 +1,8 @@
+name: astrbot_plugin_repeat_delete
+display_name: Think 去重
+desc: 手动整理当前会话历史中的 think 内容：剥离无意义关键词、折叠重复段落与刷屏行，直接改写 AstrBot 对话记录。
+short_desc: /think tidy 一键清理 think 里的重复和关键词噪声。
+version: 1.0.0
+author: coco
+repo: https://github.com/coco292931/astrbot_plugin_repeat_delete
+astrbot_version: ">=4.22.0,<5"

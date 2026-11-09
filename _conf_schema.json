@@ -1,0 +1,250 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "启用 think 整理",
+    "hint": "关闭后 /think tidy 与 /think preview 都会直接返回停用提示。",
+    "default": true,
+    "obvious_hint": true
+  },
+  "admin_only": {
+    "type": "bool",
+    "description": "仅管理员可用",
+    "hint": "开启后只有平台管理员可以整理会话历史。群聊里建议开启，避免普通成员清空上下文。",
+    "default": false
+  },
+  "session_mode": {
+    "type": "string",
+    "description": "会话过滤模式",
+    "options": ["all", "whitelist", "blacklist"],
+    "labels": ["全部会话", "仅白名单", "排除黑名单"],
+    "subtitles": [
+      "任何会话都能使用 /think tidy",
+      "只有下方列出的会话能使用",
+      "下方列出的会话不能使用"
+    ],
+    "default": "all"
+  },
+  "sessions": {
+    "type": "list",
+    "description": "参与过滤的会话来源",
+    "_special": "umo",
+    "hint": "配合「会话过滤模式」使用；留空表示不限制。",
+    "default": []
+  },
+  "dry_run": {
+    "type": "bool",
+    "description": "只预览不写入",
+    "hint": "开启后 /think tidy 也只统计不写回，适合先观察删除效果。",
+    "default": false
+  },
+  "backup_before_write": {
+    "type": "bool",
+    "description": "写回前备份原始历史",
+    "hint": "把改写前的对话记录备份到 data/plugin_data/astrbot_plugin_repeat_delete/backup/。",
+    "default": true
+  },
+  "backup_limit": {
+    "type": "int",
+    "description": "每个会话保留的备份份数",
+    "hint": "0 表示不清理。",
+    "default": 10,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "report_top_blocks": {
+    "type": "int",
+    "description": "报告中展示的「删除最多」条目数",
+    "hint": "0 表示不展示明细。",
+    "default": 5,
+    "slider": {
+      "min": 0,
+      "max": 20,
+      "step": 1
+    }
+  },
+
+  "keywords": {
+    "type": "list",
+    "description": "关键词列表",
+    "hint": "整段只有这些词时整段删除；夹在句子里时只删词。默认值来自 repeat-detect/clean.py。单字中文关键词默认要求后接标点才算噪声。",
+    "default": [
+      "避免句号结尾",
+      "避免整齐结构",
+      "避免句号",
+      "避免整齐",
+      "用上面那句",
+      "用这个",
+      "就这样",
+      "好了",
+      "够了",
+      "完全",
+      "输出",
+      "ok",
+      "end",
+      "好",
+      "用"
+    ],
+    "obvious_hint": true
+  },
+  "keyword_regex": {
+    "type": "list",
+    "description": "额外正则关键词",
+    "hint": "每一项是一个 Python 正则，用于匹配关键词列表覆盖不到的模式；非法正则会被忽略。",
+    "default": []
+  },
+  "ignore_case": {
+    "type": "bool",
+    "description": "关键词忽略大小写",
+    "default": true
+  },
+  "anchor_single_char": {
+    "type": "bool",
+    "description": "单字关键词要求后接标点",
+    "hint": "开启后「好」「用」只有出现在「好，」「用。」这类位置才算噪声，避免误伤「好像」「使用」等正常词。",
+    "default": true
+  },
+  "drop_keyword_only_paragraphs": {
+    "type": "bool",
+    "description": "整段只有关键词时删除整段",
+    "default": true
+  },
+  "strip_inline_keywords": {
+    "type": "bool",
+    "description": "删除句中夹带的关键词",
+    "hint": "关闭后只做整段删除，句中出现的「输出」等词会保留。",
+    "default": true
+  },
+
+  "max_paragraph_repeats": {
+    "type": "int",
+    "description": "同一段落最多保留次数",
+    "hint": "对应 clean.py 的 KEEP，默认 2。",
+    "default": 2,
+    "slider": {
+      "min": 1,
+      "max": 10,
+      "step": 1
+    }
+  },
+  "near_duplicate": {
+    "type": "object",
+    "description": "近似重复判定",
+    "hint": "完全相同总是判重；这里的参数决定多像才算「同一个段落」。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用近似重复判定",
+        "default": true
+      },
+      "max_chars": {
+        "type": "int",
+        "description": "参与近似判定的最大长度",
+        "hint": "只对不长于该字数的段落做编辑距离比较，对应 clean.py 的 NEAR_MAXLEN。",
+        "default": 40,
+        "slider": {
+          "min": 4,
+          "max": 200,
+          "step": 1
+        }
+      },
+      "threshold": {
+        "type": "float",
+        "description": "相似度阈值",
+        "hint": "归一化编辑距离相似度，0.80 表示允许 20% 的差异。",
+        "default": 0.8,
+        "slider": {
+          "min": 0.5,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "length_ratio": {
+        "type": "float",
+        "description": "允许的最大相对长度差",
+        "hint": "两段长度差超过该比例时直接判定为不重复，对应 clean.py 的 LEN_RATIO。",
+        "default": 0.35,
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      }
+    }
+  },
+  "dedupe_lines": {
+    "type": "bool",
+    "description": "启用行级去重",
+    "hint": "think 里常见同一行刷屏（好/好了/输出各占一行），开启后按行折叠，效果比只按空行分段更彻底。",
+    "default": true
+  },
+  "max_line_repeats": {
+    "type": "int",
+    "description": "同一行最多保留次数",
+    "default": 1,
+    "slider": {
+      "min": 1,
+      "max": 10,
+      "step": 1
+    }
+  },
+  "dedupe_sentences": {
+    "type": "bool",
+    "description": "启用句子级去重",
+    "hint": "处理一个长段落里反复出现的同一句。默认关闭，因为可能删掉有意重复的强调。",
+    "default": false
+  },
+  "max_sentence_repeats": {
+    "type": "int",
+    "description": "同一句最多保留次数",
+    "default": 1,
+    "slider": {
+      "min": 1,
+      "max": 10,
+      "step": 1
+    }
+  },
+
+  "roles": {
+    "type": "list",
+    "description": "处理的消息角色",
+    "hint": "think 只出现在 assistant 消息里，一般不需要改。",
+    "default": ["assistant"]
+  },
+  "max_messages": {
+    "type": "int",
+    "description": "默认只处理最近多少条消息",
+    "hint": "0 表示整段历史。/think tidy 30 可以临时覆盖本次处理范围。",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 2000,
+      "step": 10
+    }
+  },
+  "max_block_chars": {
+    "type": "int",
+    "description": "单个 think 块字数上限",
+    "hint": "超过该字数的块直接跳过，避免超长思考拖慢命令。0 表示不限制。",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 200000,
+      "step": 1000
+    }
+  },
+  "drop_empty_think": {
+    "type": "bool",
+    "description": "删除被清空的 think 块",
+    "hint": "清洗后只剩空白的 think 会从消息里移除（消息至少保留一个 part）。",
+    "default": true
+  },
+  "clear_thinking_signature": {
+    "type": "bool",
+    "description": "改动后清除思考签名",
+    "hint": "Anthropic 等供应商的思考签名与原文绑定，内容被改动后签名会失效，因此默认清除。若你的模型要求必须回传签名，请关闭此项。",
+    "default": true
+  }
+}
