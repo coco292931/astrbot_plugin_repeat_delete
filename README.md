@@ -1,10 +1,12 @@
 # astrbot_plugin_repeat_delete
 
 把 repeat-detect 里「关键词剥离 + 重复折叠」那套脚本搬进 AstrBot，
-用一条 `/think tidy` 直接改写**当前会话**对话记录里的 think 片段。
+用一条 `/think tidy` 直接改写**当前会话**对话记录里的 think 片段；
+`/think view` 则把 think 原文以合并转发的方式摊开给你看。
 
 - 不改回复、不改用户消息、不动 think 以外的任何字段
 - 写回前会自动备份原始对话记录
+- `/think view` 只读，默认合并转发、完整不截断
 - 清理力度、关键词、相似度阈值全部在插件配置面板里调
 
 ## 原理
@@ -39,9 +41,12 @@ AstrBot 会把模型的思考内容按
 | `/think tidy 30` | 只处理最近 30 条消息 |
 | `/think preview` | 只统计不写入，先看看会删掉多少 |
 | `/think preview 30` | 同上，限定最近 30 条 |
+| `/think view` | 查看最近 10 条消息里的 think 原文（合并转发） |
+| `/think view 3` | 查看最近 3 条消息里的 think 原文 |
+| `/think view 0` | 查看整段对话历史里的 think |
 | `/think` | 查看子命令列表 |
 
-中文别名同样可用：`/think 整理`、`/think 预览`；指令组别名 `THINK`。
+中文别名同样可用：`/think 整理`、`/think 预览`、`/think 查看`；指令组别名 `THINK`。
 
 返回示例：
 
@@ -57,9 +62,20 @@ think 块 108 个 ｜ 改写 106 个
 耗时 0.42s
 ```
 
+### `/think view` 的发送方式
+
+- 默认走**合并转发**：第一条节点是摘要（范围、块数、合计字数），
+  之后每个 think 块一个节点，节点名为 `think`（可配置）。
+- **不按字数截断**，原文完整发出；单个节点超过 `view_node_max_chars`
+  时会把该块拆成多个节点并标注 `（续 2）`，内容本身不丢。
+- 平台不支持合并转发（如 Telegram）或适配器报错时，自动回退为多条纯文本，
+  按 `view_plain_chunk_chars` 分段，同样不丢内容。
+- 合并转发依赖 `aiocqhttp` / `satori` 适配器的 `send_group_forward_msg` /
+  `send_private_forward_msg`；其它协议端可在 `view_forward_platforms` 里加白名单。
+
 ## 配置
 
-配置面板按「运行开关 / 关键词 / 判重参数 / 范围与安全」分组。
+配置面板按「运行开关 / 关键词 / 判重参数 / 范围与安全 / 查看」分组。
 
 ### 运行开关
 
@@ -117,6 +133,19 @@ think 块 108 个 ｜ 改写 106 个
 > Anthropic 等供应商的思考签名与原文绑定，内容一改签名就失效，所以默认清除。
 > 若你的模型要求必须回传签名，请关闭 `clear_thinking_signature`。
 
+### 查看（`/think view`）
+
+| 项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `view_default_count` | `10` | 不带数字时查看最近多少条消息，0 表示整段历史 |
+| `view_max_count` | `50` | 单次最多查看多少条消息，0 表示不限制 |
+| `view_max_chars_per_block` | `0` | 单块最多显示多少字，0 表示完整输出 |
+| `view_use_forward` | `true` | 优先用合并转发 |
+| `view_forward_platforms` | `["aiocqhttp", "satori"]` | 支持合并转发的适配器，留空表示不限制 |
+| `view_node_name` | `"think"` | 合并转发节点显示的名称 |
+| `view_node_max_chars` | `3000` | 单节点最大字数，超出拆成「续 N」节点，0 表示不拆 |
+| `view_plain_chunk_chars` | `1200` | 回退纯文本时每条消息的字数 |
+
 ## 注意
 
 - 只动**当前会话当前对话**的历史；其它会话、其它对话不受影响。
@@ -125,6 +154,7 @@ think 块 108 个 ｜ 改写 106 个
 - 写回后 AstrBot 会把清理后的 think 一并作为上下文发给模型，
   因此清理只能减少噪音，不能「让模型忘记」已经发生的对话内容。
 - 建议先用 `/think preview` 观察一次再正式执行。
+- `/think view` 只读不写，不会改动历史记录。
 
 ## 目录结构
 
@@ -134,6 +164,7 @@ astrbot_plugin_repeat_delete/
 ├── core/cleaner.py      # 纯文本清洗引擎（关键词 + 判重）
 ├── core/config.py       # 配置面板 -> 强类型设置
 ├── core/history.py      # 对话历史读取、think 改写、备份
+├── core/view.py         # /think view 的合并转发与纯文本排版
 ├── _conf_schema.json    # 配置面板 schema
 └── tests/               # 无需 AstrBot 运行时即可运行的测试
 ```
@@ -142,7 +173,7 @@ astrbot_plugin_repeat_delete/
 
 ```bash
 python tests/test_cleaner.py   # 清洗规则
-python tests/test_plugin.py    # 指令流程、备份、配置解析（使用 astrbot 替身）
+python tests/test_plugin.py    # 指令流程、查看发送、备份、配置解析（使用 astrbot 替身）
 ```
 
 ## 兼容性

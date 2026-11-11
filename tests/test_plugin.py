@@ -64,6 +64,13 @@ def run(plugin, event, preview=False):
     return asyncio.run(_collect())
 
 
+def run_view(plugin, event):
+    async def _collect():
+        return [item async for item in plugin._handle_view(event)]
+
+    return asyncio.run(_collect())
+
+
 def make_plugin(config: dict, manager) -> RepeatDeletePlugin:
     plugin = RepeatDeletePlugin(FakeContext(manager), config)
     plugin._backup_root = DATA_DIR / "backup"
@@ -315,6 +322,9 @@ def test_load_settings_defaults_and_coercion():
     assert defaults.enabled is True
     assert defaults.clean.max_paragraph_repeats == 2
     assert "避免句号结尾" in defaults.clean.keywords
+    assert defaults.view.default_count == 10
+    assert defaults.view.use_forward is True
+    assert defaults.view.max_chars == 0
 
     coerced = load_settings(
         {
@@ -324,6 +334,10 @@ def test_load_settings_defaults_and_coercion():
             "keywords": "好\n好了，输出",
             "roles": "assistant",
             "session_mode": "WHITELIST",
+            "view_default_count": "20",
+            "view_use_forward": "false",
+            "view_forward_platforms": "",
+            "view_node_name": "  ",
         }
     )
     assert coerced.enabled is False
@@ -333,6 +347,230 @@ def test_load_settings_defaults_and_coercion():
     assert coerced.clean.keywords == ("好", "好了", "输出")
     assert coerced.roles == ("assistant",)
     assert coerced.session_mode == "whitelist"
+    assert coerced.view.default_count == 20
+    assert coerced.view.use_forward is False
+    assert coerced.view.forward_platforms == ()
+    assert coerced.view.node_name == "think"
+
+
+# ---------------- /think view ----------------
+
+
+def build_multi_think_history() -> list:
+    history = [{"role": "user", "content": "开场"}]
+    for index in range(4):
+        history.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "think", "think": f"第 {index} 条思考" * 3},
+                    {"type": "text", "text": f"回复 {index}"},
+                ],
+            }
+        )
+    return history
+
+
+def test_view_sends_single_merged_forward():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({}, manager)
+    event = FakeEvent(UMO, "think view")
+
+    results = run_view(plugin, event)
+
+    assert results == []
+    assert len(event.sent) == 1
+    chain = event.sent[0].chain
+    # 整条消息链里只有一个 Nodes：aiocqhttp 会把每个顶层节点分别发一条转发
+    assert len(chain) == 1
+    assert chain[0].type == "nodes"
+    nodes = chain[0].nodes
+    # 1 个摘要节点 + 4 个 think 节点
+    assert len(nodes) == 5
+    assert all(node.name == "think" for node in nodes)
+    assert "think 查看" in nodes[0].content[0].text
+    assert "#2.1" in nodes[1].content[0].text
+    assert "第 0 条思考" in nodes[1].content[0].text
+    assert manager.save_calls == 0
+
+
+def test_view_limits_scope_to_last_n_messages():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({}, manager)
+    event = FakeEvent(UMO, "think view 1")
+
+    run_view(plugin, event)
+
+    nodes = event.sent[0].chain[0].nodes
+    assert len(nodes) == 2
+    assert "第 3 条思考" in nodes[1].content[0].text
+    assert "第 2 条思考" not in nodes[1].content[0].text
+
+
+def test_view_respects_max_count():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({"view_max_count": 1}, manager)
+    event = FakeEvent(UMO, "think view 99")
+
+    run_view(plugin, event)
+
+    nodes = event.sent[0].chain[0].nodes
+    assert len(nodes) == 2
+    assert "第 3 条思考" in nodes[1].content[0].text
+
+
+def test_view_falls_back_to_plain_text_on_unsupported_platform():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({}, manager)
+    event = FakeEvent(UMO, "think view", platform="telegram")
+
+    results = run_view(plugin, event)
+
+    assert event.sent == []
+    assert results, "应回退为纯文本"
+    joined = "\n".join(item.text for item in results)
+    assert "think 查看" in joined
+    assert "#2.1" in joined
+    assert "第 0 条思考" in joined
+
+
+def test_view_falls_back_when_forward_send_fails():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({}, manager)
+    event = FakeEvent(UMO, "think view")
+    event.send_error = RuntimeError("boom")
+
+    results = run_view(plugin, event)
+
+    assert results, "合并转发失败后应回退纯文本"
+    assert "think 查看" in results[0].text
+
+
+def test_view_disable_forward_uses_plain_text():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({"view_use_forward": False}, manager)
+    event = FakeEvent(UMO, "think view")
+
+    results = run_view(plugin, event)
+
+    assert event.sent == []
+    assert "think 查看" in results[0].text
+
+
+def test_view_chunks_long_plain_text():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin(
+        {"view_use_forward": False, "view_plain_chunk_chars": 200}, manager
+    )
+    event = FakeEvent(UMO, "think view")
+
+    results = run_view(plugin, event)
+
+    assert len(results) > 1
+    assert all(len(item.text) <= 260 for item in results)
+
+
+def test_view_no_think_content():
+    manager = FakeConversationManager([{"role": "user", "content": "hi"}])
+    plugin = make_plugin({}, manager)
+    event = FakeEvent(UMO, "think view 5")
+
+    results = run_view(plugin, event)
+
+    assert event.sent == []
+    assert "没有 think 内容" in results[0].text
+
+
+def test_view_truncates_when_configured():
+    think = "字" * 100
+    history = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "think", "think": think},
+                {"type": "text", "text": "ok"},
+            ],
+        }
+    ]
+    manager = FakeConversationManager(history)
+    plugin = make_plugin({"view_max_chars_per_block": 10}, manager)
+    event = FakeEvent(UMO, "think view")
+
+    run_view(plugin, event)
+
+    body = event.sent[0].chain[0].nodes[1].content[0].text
+    header, _, content = body.partition("\n")
+    assert "已截断，原 100 字" in header
+    assert content == "字" * 10 + "…"
+
+
+def test_view_splits_overlong_block_into_continuation_nodes():
+    think = "\n".join(f"第 {i} 行内容比较长一些" for i in range(50))
+    history = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "think", "think": think},
+                {"type": "text", "text": "ok"},
+            ],
+        }
+    ]
+    manager = FakeConversationManager(history)
+    plugin = make_plugin({"view_node_max_chars": 100}, manager)
+    event = FakeEvent(UMO, "think view")
+
+    run_view(plugin, event)
+
+    nodes = event.sent[0].chain[0].nodes
+    assert len(nodes) > 2
+    assert any("（续 2）" in node.content[0].text for node in nodes[1:])
+    combined = "".join(node.content[0].text for node in nodes[1:])
+    for i in range(50):
+        assert f"第 {i} 行内容比较长一些" in combined
+
+
+def test_view_blocked_by_admin_only():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({"admin_only": True}, manager)
+    event = FakeEvent(UMO, "think view", role="member")
+
+    results = run_view(plugin, event)
+
+    assert event.sent == []
+    assert "管理员" in results[0].text
+
+
+def test_view_blocked_when_disabled():
+    manager = FakeConversationManager(build_multi_think_history())
+    plugin = make_plugin({"enabled": False}, manager)
+    event = FakeEvent(UMO, "think view")
+
+    results = run_view(plugin, event)
+
+    assert event.sent == []
+    assert "关闭" in results[0].text
+
+
+def test_collect_think_blocks_order_and_metadata():
+    view = history_mod.collect_think_blocks(
+        build_multi_think_history(), roles=("assistant",), count=0
+    )
+    assert [b.message_index for b in view.blocks] == [2, 3, 4, 5]
+    assert all(b.part_index == 1 for b in view.blocks)
+    assert view.total_chars == sum(b.chars for b in view.blocks)
+    assert view.truncated_blocks == 0
+
+
+def test_split_text_keeps_every_line():
+    from core.view import split_text
+
+    text = "\n".join(f"line {i}" for i in range(100)) + "\n" + "x" * 500
+    chunks = split_text(text, 120)
+    assert all(len(chunk) <= 120 for chunk in chunks)
+    rebuilt = "\n".join(chunks).replace("\n", "")
+    assert rebuilt.count("line") == 100
+    assert rebuilt.count("x") == 500
+    assert split_text("short", 0) == ["short"]
 
 
 def main() -> int:

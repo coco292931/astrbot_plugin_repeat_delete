@@ -90,6 +90,108 @@ def parse_history(raw: Any) -> list[Any]:
     raise HistoryError(f"无法识别的对话记录类型：{type(raw).__name__}")
 
 
+@dataclass(frozen=True)
+class ThinkBlock:
+    """用于查看的一个 think 块。"""
+
+    message_index: int
+    """1-based，在整段对话历史中的位置。"""
+    part_index: int
+    """1-based，在该条消息内的位置。"""
+    role: str
+    chars: int
+    """原始字数。"""
+    text: str
+    truncated: bool = False
+
+    @property
+    def header(self) -> str:
+        mark = (
+            f"（已截断，原 {self.chars} 字）" if self.truncated else f"{self.chars} 字"
+        )
+        return f"[#{self.message_index}.{self.part_index}] {self.role} · {mark}"
+
+
+@dataclass
+class ViewResult:
+    """一次查看的结果。"""
+
+    conv_id: str = ""
+    messages: int = 0
+    scanned_messages: int = 0
+    blocks: list[ThinkBlock] = field(default_factory=list)
+
+    @property
+    def total_chars(self) -> int:
+        return sum(block.chars for block in self.blocks)
+
+    @property
+    def truncated_blocks(self) -> int:
+        return sum(1 for block in self.blocks if block.truncated)
+
+
+def collect_think_blocks(
+    history: list[Any],
+    *,
+    roles: tuple[str, ...],
+    count: int = 0,
+    max_chars: int = 0,
+) -> ViewResult:
+    """收集最近 ``count`` 条消息里的 think 块（按时间正序返回）。
+
+    Args:
+        history: 完整对话历史。
+        roles: 只保留这些角色的消息（不区分大小写）。
+        count: 只扫描最近多少条消息；0 表示全部。
+        max_chars: 单个块的最大展示字数；0 表示不截断。
+    """
+    result = ViewResult(messages=len(history))
+    allowed_roles = {role.lower() for role in roles} or {"assistant"}
+
+    start = 0
+    if count > 0 and len(history) > count:
+        start = len(history) - count
+
+    for index in range(start, len(history)):
+        message = history[index]
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "")).lower()
+        if role not in allowed_roles:
+            continue
+        result.scanned_messages += 1
+
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+
+        part_seq = 0
+        for part in content:
+            if not (
+                isinstance(part, dict)
+                and part.get("type") == "think"
+                and isinstance(part.get("think"), str)
+                and part["think"].strip()
+            ):
+                continue
+            part_seq += 1
+            text = part["think"]
+            chars = len(text)
+            truncated = max_chars > 0 and chars > max_chars
+            result.blocks.append(
+                ThinkBlock(
+                    message_index=index + 1,
+                    part_index=part_seq,
+                    role=role,
+                    chars=chars,
+                    text=(text[:max_chars] + "…") if truncated else text,
+                    truncated=truncated,
+                )
+            )
+
+    return result
+
+
 def tidy_messages(
     history: list[Any],
     cleaner: ThinkCleaner,

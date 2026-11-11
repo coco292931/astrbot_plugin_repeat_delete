@@ -246,5 +246,78 @@
     "description": "改动后清除思考签名",
     "hint": "Anthropic 等供应商的思考签名与原文绑定，内容被改动后签名会失效，因此默认清除。若你的模型要求必须回传签名，请关闭此项。",
     "default": true
+  },
+
+  "view_default_count": {
+    "type": "int",
+    "description": "【查看】默认查看多少条消息",
+    "hint": "/think view 不带数字时使用；0 表示整段历史。",
+    "default": 10,
+    "slider": {
+      "min": 0,
+      "max": 200,
+      "step": 1
+    }
+  },
+  "view_max_count": {
+    "type": "int",
+    "description": "【查看】单次最多查看多少条消息",
+    "hint": "防止一次转发过多内容；0 表示不限制。",
+    "default": 50,
+    "slider": {
+      "min": 0,
+      "max": 2000,
+      "step": 10
+    }
+  },
+  "view_max_chars_per_block": {
+    "type": "int",
+    "description": "【查看】单个 think 块最多显示多少字",
+    "hint": "0 表示不截断，按原文字数完整输出。",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 500
+    }
+  },
+  "view_use_forward": {
+    "type": "bool",
+    "description": "【查看】优先使用合并转发",
+    "hint": "开启后把每个 think 块放进一条合并转发消息，避免刷屏；平台不支持时自动回退多条纯文本。",
+    "default": true
+  },
+  "view_forward_platforms": {
+    "type": "list",
+    "description": "【查看】支持合并转发的平台",
+    "hint": "填写适配器名称，如 aiocqhttp、satori。留空表示不限制，交给适配器尝试。",
+    "default": ["aiocqhttp", "satori"]
+  },
+  "view_node_name": {
+    "type": "string",
+    "description": "【查看】合并转发节点显示的名称",
+    "default": "think"
+  },
+  "view_node_max_chars": {
+    "type": "int",
+    "description": "【查看】单个转发节点的最大字数",
+    "hint": "超过该长度会把一个 think 块拆成多个节点（标注「续」），内容不会被截断。0 表示不拆。",
+    "default": 3000,
+    "slider": {
+      "min": 0,
+      "max": 20000,
+      "step": 500
+    }
+  },
+  "view_plain_chunk_chars": {
+    "type": "int",
+    "description": "【查看】回退纯文本时每段字数",
+    "hint": "平台不支持合并转发时，按该长度切成多条消息发送。",
+    "default": 1200,
+    "slider": {
+      "min": 200,
+      "max": 8000,
+      "step": 100
+    }
   }
 }

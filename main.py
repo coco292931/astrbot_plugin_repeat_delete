@@ -12,12 +12,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools, register
 
 from .core.cleaner import ThinkCleaner
 from .core.config import PluginSettings, load_settings
-from .core.history import HistoryError, HistoryStore, TidyReport, tidy_messages
+from .core.history import (
+    HistoryError,
+    HistoryStore,
+    TidyReport,
+    collect_think_blocks,
+    tidy_messages,
+)
+from .core.view import (
+    forward_components,
+    plain_chunks,
+    scope_label,
+    supports_forward,
+)
 
 try:  # AstrBot 4.22+ 用同一把会话锁串行化同会话的 LLM 请求
     from astrbot.core.utils.session_lock import session_lock_manager
@@ -31,6 +43,7 @@ SESSION_LOCK_TIMEOUT = 20.0
 
 TIDY_ALIASES = {"整理", "clean"}
 PREVIEW_ALIASES = {"预览", "check", "dry"}
+VIEW_ALIASES = {"查看", "show", "ls"}
 
 
 @register(
@@ -67,7 +80,7 @@ class RepeatDeletePlugin(Star):
 
     @filter.command_group("think", alias={"THINK"})
     def think(self):
-        """整理对话历史中的 think（思考）内容。"""
+        """查看或整理对话历史中的 think（思考）内容。"""
 
     @think.command("tidy", alias=TIDY_ALIASES)
     async def tidy(self, event: AstrMessageEvent):
@@ -85,6 +98,15 @@ class RepeatDeletePlugin(Star):
         用法：/think preview [最近消息数]
         """
         async for result in self._handle(event, preview=True):
+            yield result
+
+    @think.command("view", alias=VIEW_ALIASES)
+    async def view(self, event: AstrMessageEvent):
+        """查看最近 n 条消息里的 think 原文，尽量以合并转发发送。
+
+        用法：/think view [最近消息数]
+        """
+        async for result in self._handle_view(event):
             yield result
 
     # ---------------- 主流程 ----------------
@@ -161,11 +183,89 @@ class RepeatDeletePlugin(Star):
             elapsed,
         )
 
+    # ---------------- 查看 think ----------------
+
+    async def _handle_view(self, event: AstrMessageEvent):
+        # 与 tidy 一样不调用 stop_event()，否则管道会跳过 Respond 阶段
+        settings = load_settings(self._config)
+        view_cfg = settings.view
+
+        blocked = self._check_access(event, settings)
+        if blocked:
+            yield event.plain_result(blocked)
+            return
+
+        count = self._trailing_number(event.message_str, view_cfg.default_count)
+        if count > 0 and view_cfg.max_count > 0:
+            count = min(count, view_cfg.max_count)
+
+        umo = event.unified_msg_origin
+        store = HistoryStore(
+            getattr(self.context, "conversation_manager", None),
+            self._backup_root,
+            self.logger,
+        )
+        try:
+            conv_id, history = await store.load(umo)
+        except HistoryError as exc:
+            yield event.plain_result(f"❌ {exc}")
+            return
+
+        view = collect_think_blocks(
+            history, roles=settings.roles, count=count, max_chars=view_cfg.max_chars
+        )
+        view.conv_id = conv_id
+
+        if not view.blocks:
+            yield event.plain_result(f"{scope_label(count)}里没有 think 内容")
+            return
+
+        platform = ""
+        getter = getattr(event, "get_platform_name", None)
+        if callable(getter):
+            platform = str(getter() or "")
+
+        if view_cfg.use_forward and supports_forward(
+            platform, view_cfg.forward_platforms
+        ):
+            components = forward_components(
+                view,
+                count=count,
+                node_name=view_cfg.node_name,
+                node_max_chars=view_cfg.node_max_chars,
+            )
+            if components:
+                try:
+                    await event.send(MessageChain(chain=components))
+                    self.logger.info(
+                        "[repeat_delete] 以合并转发查看 think：conv=%s blocks=%d chars=%d",
+                        conv_id,
+                        len(view.blocks),
+                        view.total_chars,
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning(
+                        f"[repeat_delete] 合并转发发送失败，回退纯文本: {exc}"
+                    )
+
+        for chunk in plain_chunks(
+            view, count=count, chunk_chars=view_cfg.plain_chunk_chars
+        ):
+            yield event.plain_result(chunk)
+
+        self.logger.info(
+            "[repeat_delete] 以纯文本查看 think：conv=%s blocks=%d chars=%d",
+            conv_id,
+            len(view.blocks),
+            view.total_chars,
+        )
+
     # ---------------- 辅助 ----------------
 
     def _check_access(self, event: AstrMessageEvent, settings: PluginSettings) -> str:
         if not settings.enabled:
-            return "⛔ think 整理功能已在插件配置中关闭。"
+            return "⛔ think 功能已在插件配置中关闭。"
 
         if settings.admin_only:
             is_admin = getattr(event, "is_admin", None)

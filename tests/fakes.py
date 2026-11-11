@@ -13,12 +13,27 @@ class FakeResult:
         self.text = text
 
 
+class FakeMessageChain:
+    def __init__(self, chain=None, **kwargs) -> None:
+        self.chain = list(chain or [])
+        self.use_t2i_ = kwargs.get("use_t2i_")
+
+
 class FakeEvent:
-    def __init__(self, umo: str, message_str: str, role: str = "admin") -> None:
+    def __init__(
+        self,
+        umo: str,
+        message_str: str,
+        role: str = "admin",
+        platform: str = "aiocqhttp",
+    ) -> None:
         self.unified_msg_origin = umo
         self.message_str = message_str
         self.role = role
+        self.platform = platform
         self.stopped = False
+        self.sent: list[FakeMessageChain] = []
+        self.send_error: Exception | None = None
 
     def plain_result(self, text: str) -> FakeResult:
         return FakeResult(text)
@@ -26,8 +41,16 @@ class FakeEvent:
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    def get_platform_name(self) -> str:
+        return self.platform
+
     def stop_event(self) -> None:
         self.stopped = True
+
+    async def send(self, message: FakeMessageChain) -> None:
+        if self.send_error is not None:
+            raise self.send_error
+        self.sent.append(message)
 
 
 class FakeConversation:
@@ -114,7 +137,34 @@ def install_astrbot_stubs(data_dir: Path) -> None:
             return decorator
 
     event_mod.AstrMessageEvent = AstrMessageEvent
+    event_mod.MessageChain = FakeMessageChain
     event_mod.filter = _Filter()
+
+    components_mod = types.ModuleType("astrbot.api.message_components")
+
+    class _Plain:
+        type = "plain"
+
+        def __init__(self, text: str, **kwargs) -> None:
+            self.text = text
+
+    class _Node:
+        type = "node"
+
+        def __init__(self, content=None, **kwargs) -> None:
+            self.content = list(content or [])
+            self.name = kwargs.get("name")
+            self.uin = kwargs.get("uin")
+
+    class _Nodes:
+        type = "nodes"
+
+        def __init__(self, nodes=None, **kwargs) -> None:
+            self.nodes = list(nodes or [])
+
+    components_mod.Plain = _Plain
+    components_mod.Node = _Node
+    components_mod.Nodes = _Nodes
 
     class Star:
         def __init__(self, context, config=None) -> None:
@@ -139,4 +189,5 @@ def install_astrbot_stubs(data_dir: Path) -> None:
     sys.modules["astrbot"] = astrbot
     sys.modules["astrbot.api"] = api
     sys.modules["astrbot.api.event"] = event_mod
+    sys.modules["astrbot.api.message_components"] = components_mod
     sys.modules["astrbot.api.star"] = star_mod

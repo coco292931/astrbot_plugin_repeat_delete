@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .cleaner import DEFAULT_KEYWORDS, CleanSettings
+from .view import DEFAULT_FORWARD_PLATFORMS
 
 _TRUE = {"1", "true", "yes", "on", "enable", "enabled"}
 _FALSE = {"0", "false", "no", "off", "disable", "disabled"}
@@ -100,6 +101,20 @@ def as_choice(value: Any, options: tuple[str, ...], default: str) -> str:
 
 
 @dataclass(frozen=True)
+class ViewSettings:
+    """``/think view`` 的相关参数。"""
+
+    default_count: int = 10
+    max_count: int = 50
+    max_chars: int = 0
+    use_forward: bool = True
+    forward_platforms: tuple[str, ...] = DEFAULT_FORWARD_PLATFORMS
+    node_name: str = "think"
+    node_max_chars: int = 3000
+    plain_chunk_chars: int = 1200
+
+
+@dataclass(frozen=True)
 class PluginSettings:
     """插件运行期使用的全部设置。"""
 
@@ -117,6 +132,7 @@ class PluginSettings:
     clear_thinking_signature: bool = True
     report_top_blocks: int = 5
     clean: CleanSettings = field(default_factory=CleanSettings)
+    view: ViewSettings = field(default_factory=ViewSettings)
 
     def session_allowed(self, umo: str) -> bool:
         if self.session_mode == "whitelist":
@@ -178,6 +194,26 @@ def load_settings(config: Any) -> PluginSettings:
         if role
     )
 
+    forward_platforms = as_str_list(
+        _lookup(config, "view_forward_platforms", DEFAULT_FORWARD_PLATFORMS)
+    )
+    view = ViewSettings(
+        default_count=as_int(_lookup(config, "view_default_count", 10), 10, minimum=0),
+        max_count=as_int(_lookup(config, "view_max_count", 50), 50, minimum=0),
+        max_chars=as_int(_lookup(config, "view_max_chars_per_block", 0), 0, minimum=0),
+        use_forward=as_bool(_lookup(config, "view_use_forward", True), True),
+        # 空列表表示不限制平台，交给底层适配器尝试合并转发
+        forward_platforms=forward_platforms,
+        node_name=as_text(_lookup(config, "view_node_name", "think"), "think").strip()
+        or "think",
+        node_max_chars=as_int(
+            _lookup(config, "view_node_max_chars", 3000), 3000, minimum=0
+        ),
+        plain_chunk_chars=as_int(
+            _lookup(config, "view_plain_chunk_chars", 1200), 1200, minimum=200
+        ),
+    )
+
     return PluginSettings(
         enabled=as_bool(_lookup(config, "enabled", True), True),
         admin_only=as_bool(_lookup(config, "admin_only", False), False),
@@ -197,4 +233,5 @@ def load_settings(config: Any) -> PluginSettings:
         ),
         report_top_blocks=as_int(_lookup(config, "report_top_blocks", 5), 5, minimum=0),
         clean=clean,
+        view=view,
     )
