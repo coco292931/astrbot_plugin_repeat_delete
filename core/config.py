@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .cleaner import DEFAULT_KEYWORDS, CleanSettings
+from .cleaner import DEFAULT_KEYWORDS, DEFAULT_SINGLE_CHAR_PUNCT, CleanSettings
 from .view import DEFAULT_FORWARD_PLATFORMS
 
 _TRUE = {"1", "true", "yes", "on", "enable", "enabled"}
@@ -185,6 +185,16 @@ def load_settings(config: Any) -> PluginSettings:
         dedupe_sentences=as_bool(_lookup(config, "dedupe_sentences", False), False),
         max_sentence_repeats=as_int(
             _lookup(config, "max_sentence_repeats", 1), 1, minimum=1
+        ),
+        single_char_strip=as_bool(
+            _lookup(config, "single_char_strip_enabled", False), False
+        ),
+        single_char_punct=as_text(
+            _lookup(config, "single_char_punct_regex", DEFAULT_SINGLE_CHAR_PUNCT),
+            DEFAULT_SINGLE_CHAR_PUNCT,
+        ),
+        single_char_protect_ascii=as_bool(
+            _lookup(config, "single_char_protect_ascii", False), False
         ),
     )
 

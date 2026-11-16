@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.cleaner import (  # noqa: E402
     CleanSettings,
     ThinkCleaner,
+    build_delimiter_pattern,
     build_keyword_pattern,
     normalize,
     similarity,
@@ -151,6 +152,119 @@ def test_unicode_normalization_survives_roundtrip():
     cleaner = ThinkCleaner()
     text = unicodedata.normalize("NFC", FULLWIDTH_SAMPLE)
     assert isinstance(cleaner.clean(text).text, str)
+
+
+# ---------------- 实验性：单字 + 标点剔除 ----------------
+
+
+def test_single_char_strip_disabled_by_default():
+    cleaner = ThinkCleaner(CleanSettings(keywords=()))
+    result = cleaner.clean("嗯。我想想看。")
+    assert result.text == "嗯。我想想看。"
+    assert result.dropped_single_chars == 0
+
+
+def test_single_char_strip_removes_punct_delimited_cells():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    result = cleaner.clean("嗯。我想想看，先问城市。")
+    assert result.text == "我想想看，先问城市。"
+    assert result.dropped_single_chars == 1
+
+
+def test_single_char_strip_removes_consecutive_cells():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    result = cleaner.clean("对。嗯。真的。我要想想。")
+    assert result.text == "真的。我要想想。"
+    assert result.dropped_single_chars == 2
+
+
+def test_single_char_strip_uses_newline_as_delimiter():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    result = cleaner.clean("嗯\n我想想\n对\n先问城市")
+    assert result.text == "我想想\n先问城市"
+    assert result.dropped_single_chars == 2
+
+
+def test_single_char_strip_handles_head_tail_and_whole_block():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    assert cleaner.clean("嗯").text == ""
+    assert cleaner.clean("嗯。").text == ""
+    assert cleaner.clean("嗯。我想想。").text == "我想想。"
+    assert cleaner.clean("我想想。嗯").text == "我想想。"
+
+
+def test_single_char_strip_keeps_multi_char_cells():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    text = "我想想看。先问城市。再决定。"
+    assert cleaner.clean(text).text == text
+
+
+def test_single_char_strip_custom_punctuation():
+    cleaner = ThinkCleaner(
+        CleanSettings(keywords=(), single_char_strip=True, single_char_punct="！？")
+    )
+    result = cleaner.clean("嗯！我想想？好的。")
+    # 只认 ！？ 作为分隔，所以「好的。」不受影响
+    assert result.text == "我想想？好的。"
+    assert result.dropped_single_chars == 1
+
+
+def test_single_char_strip_accepts_full_character_class():
+    cleaner = ThinkCleaner(
+        CleanSettings(keywords=(), single_char_strip=True, single_char_punct="[。.]")
+    )
+    assert cleaner.clean("嗯.我想想.").text == "我想想."
+
+
+def test_single_char_strip_invalid_regex_degrades_gracefully():
+    cleaner = ThinkCleaner(
+        CleanSettings(keywords=(), single_char_strip=True, single_char_punct="[。")
+    )
+    text = "嗯。我想想。"
+    assert cleaner.clean(text).text == text
+    assert build_delimiter_pattern("[。") is None
+
+
+def test_single_char_strip_protects_ascii_when_enabled():
+    literal = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    assert literal.clean("3.5 分钟。").text == "5 分钟。"
+
+    guarded = ThinkCleaner(
+        CleanSettings(
+            keywords=(), single_char_strip=True, single_char_protect_ascii=True
+        )
+    )
+    assert guarded.clean("3.5 分钟。").text == "3.5 分钟。"
+
+
+def test_single_char_strip_cleans_up_leftover_whitespace():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    result = cleaner.clean("嗯。  我想想。")
+    assert result.text == "我想想。"
+    assert not result.text.startswith(" ")
+
+
+def test_single_char_strip_keeps_paragraph_break():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    text = "先问城市。不。\n\n回：（撇嘴）不娇气汪"
+    # 「不。」被删掉，但空行要保留下来，不能把两段并成一段
+    assert cleaner.clean(text).text == "先问城市。\n\n回：（撇嘴）不娇气汪"
+
+
+def test_single_char_strip_keeps_line_break_before_content():
+    cleaner = ThinkCleaner(CleanSettings(keywords=(), single_char_strip=True))
+    text = "我想想。\n嗯\n先问城市"
+    assert cleaner.clean(text).text == "我想想。\n先问城市"
+
+
+def test_single_char_strip_runs_after_dedupe():
+    cleaner = ThinkCleaner(
+        CleanSettings(keywords=(), single_char_strip=True, max_paragraph_repeats=2)
+    )
+    result = cleaner.clean("嗯\n\n嗯\n\n嗯")
+    # 三段先去重保留两段，再各自按单字剔除
+    assert result.text == ""
+    assert result.dropped_single_chars == 2
 
 
 def main() -> int:

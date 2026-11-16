@@ -207,6 +207,26 @@
     }
   },
 
+  "single_char_strip_enabled": {
+    "type": "bool",
+    "description": "🧪 实验性：删除「单字 + 标点」片段",
+    "hint": "开启后，凡是夹在两个标点或换行之间、去掉空白后只剩一个字的片段，会连同它后面的标点一起删除。例如「嗯。我想想。」→「我想想。」。注意：默认标点含英文句点，3.5 这类小数会被拆坏，必要时打开下面的 ASCII 保护。",
+    "default": false,
+    "obvious_hint": true
+  },
+  "single_char_punct_regex": {
+    "type": "string",
+    "description": "🧪 单字剔除用作分隔的标点（正则）",
+    "hint": "填字符类内容即可，默认 「。.」；也可以写完整字符类如「[。.！？]」。换行始终视为分隔符。正则非法时该功能自动失效。",
+    "default": "。."
+  },
+  "single_char_protect_ascii": {
+    "type": "bool",
+    "description": "🧪 保护单个 ASCII 字母/数字",
+    "hint": "开启后 a. / 3.5 里的单字不会被删；默认关闭，严格按「任意单字」执行。",
+    "default": false
+  },
+
   "roles": {
     "type": "list",
     "description": "处理的消息角色",

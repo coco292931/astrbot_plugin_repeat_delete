@@ -305,6 +305,46 @@ def test_pre_existing_empty_think_part_is_left_alone():
     assert manager.saved is None
 
 
+def test_single_char_strip_config_wired_through():
+    think = "嗯。对。我想想看，先问城市。"
+    manager = FakeConversationManager(build_history(think))
+    plugin = make_plugin({"single_char_strip_enabled": True}, manager)
+    results = run(plugin, FakeEvent(UMO, "think tidy"), preview=False)
+
+    saved_think = manager.saved[1]["content"][0]["think"]
+    assert saved_think == "我想想看，先问城市。"
+    assert "删单字段 2" in results[0].text
+
+
+def test_single_char_strip_off_by_default_in_plugin():
+    think = "嗯。对。我想想看。"
+    manager = FakeConversationManager(build_history(think))
+    plugin = make_plugin({}, manager)
+    results = run(plugin, FakeEvent(UMO, "think tidy"), preview=False)
+
+    # 关闭时单字段不算噪声，整段没有其它可清理内容 => 不写回
+    assert manager.save_calls == 0
+    assert "已经是干净的了" in results[0].text
+
+
+def test_load_settings_single_char_fields():
+    settings = load_settings(
+        {
+            "single_char_strip_enabled": "true",
+            "single_char_punct_regex": "[。.！？]",
+            "single_char_protect_ascii": "1",
+        }
+    )
+    assert settings.clean.single_char_strip is True
+    assert settings.clean.single_char_punct == "[。.！？]"
+    assert settings.clean.single_char_protect_ascii is True
+
+    defaults = load_settings({})
+    assert defaults.clean.single_char_strip is False
+    assert defaults.clean.single_char_punct == "。."
+    assert defaults.clean.single_char_protect_ascii is False
+
+
 def test_parse_history_variants():
     assert history_mod.parse_history(None) == []
     assert history_mod.parse_history("[]") == []

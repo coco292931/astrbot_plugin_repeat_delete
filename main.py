@@ -338,6 +338,8 @@ def _format_report(
     )
     if settings.clean.dedupe_sentences and report.dropped_sentences:
         detail += f" ｜ 删句 {report.dropped_sentences}"
+    if settings.clean.single_char_strip and report.dropped_single_chars:
+        detail += f" ｜ 删单字段 {report.dropped_single_chars}"
     lines.append(detail)
 
     if report.skipped_large_blocks:

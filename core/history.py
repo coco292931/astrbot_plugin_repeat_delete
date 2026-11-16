@@ -50,6 +50,7 @@ class TidyReport:
     dropped_paragraphs: int = 0
     dropped_lines: int = 0
     dropped_sentences: int = 0
+    dropped_single_chars: int = 0
     removed_parts: int = 0
     cleared_signatures: int = 0
     skipped_large_blocks: int = 0
@@ -249,6 +250,7 @@ def tidy_messages(
             report.dropped_paragraphs += result.dropped_paragraphs
             report.dropped_lines += result.dropped_lines
             report.dropped_sentences += result.dropped_sentences
+            report.dropped_single_chars += result.dropped_single_chars
 
             if not result.changed:
                 new_parts.append(part)

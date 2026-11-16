@@ -37,6 +37,10 @@ DEFAULT_KEYWORDS: tuple[str, ...] = (
 
 PUNCT_CHARS = '，。、！？；：,.!?;:）)】]」』"”’'
 
+# 实验性「单字 + 标点」剔除：标点用正则配置，默认只认句号。
+# 值可以是字符类的内容（。.），也可以直接写完整的字符类（[。.]）。
+DEFAULT_SINGLE_CHAR_PUNCT = "。."
+
 _PARAGRAPH_SPLIT = re.compile(r"\n[ \t]*\n+")
 _ASCII_WORD = re.compile(r"[A-Za-z0-9_]+")
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])")
@@ -49,6 +53,8 @@ _DUP_PUNCT = re.compile(r"([，。、；：,!?;:])\1+")
 _PUNCT_BEFORE_END = re.compile(r"[，、,；;：:]+(?=[。！？.!?])")
 _LEADING_PUNCT = re.compile(r"^[，。、！？；：,.!?;:\s]+")
 _TRAILING_PUNCT = re.compile(r"[，、,；;：:]+$")
+_TRAILING_SPACES = re.compile(r"[ \t]+$", re.MULTILINE)
+_MULTI_BLANK_LINE = re.compile(r"\n{3,}")
 
 # 3-gram Jaccard 预筛阈值。最终是否重复仍由编辑距离判定，
 # 这里只是为了在段落很多时避免昂贵的全量比较。
@@ -124,6 +130,28 @@ def build_keyword_pattern(
     return re.compile("|".join(item[0] for item in alternatives), flags)
 
 
+def build_delimiter_pattern(spec: str) -> re.Pattern[str] | None:
+    """把「单字剔除」用的分隔标点编译成正则。
+
+    ``spec`` 可以是字符类内容（默认 ``。.``），也可以是完整的字符类（``[。.]``）。
+    换行始终算分隔符，所以「一行一个字」也会被剔除。
+    非法正则返回 None，调用方按「功能未启用」处理。
+    """
+    text = (spec or "").strip()
+    if not text:
+        return None
+    body = text[1:-1] if text.startswith("[") and text.endswith("]") else text
+    if not body:
+        return None
+    # 未转义的方括号会拼出嵌套字符类（并触发 FutureWarning），直接判为非法
+    if re.search(r"(?<!\\)[\[\]]", body):
+        return None
+    try:
+        return re.compile(rf"(?:[{body}\n])+")
+    except re.error:
+        return None
+
+
 @lru_cache(maxsize=4096)
 def _grams(text: str, size: int = 3) -> frozenset[str]:
     if len(text) < size:
@@ -181,6 +209,12 @@ class CleanSettings:
     max_line_repeats: int = 1
     dedupe_sentences: bool = False
     max_sentence_repeats: int = 1
+    single_char_strip: bool = False
+    """实验性：删除夹在两个标点/换行之间、只剩一个字的片段。"""
+    single_char_punct: str = DEFAULT_SINGLE_CHAR_PUNCT
+    """单字剔除用作分隔的标点，字符类内容或完整字符类。"""
+    single_char_protect_ascii: bool = False
+    """保护单个 ASCII 字母/数字，避免把 3.5、a. 这类内容拆坏。"""
 
 
 @dataclass(frozen=True)
@@ -195,6 +229,7 @@ class BlockResult:
     dropped_paragraphs: int = 0
     dropped_lines: int = 0
     dropped_sentences: int = 0
+    dropped_single_chars: int = 0
 
 
 def _group_dedupe(
@@ -303,6 +338,11 @@ class ThinkCleaner:
             if self._pattern is not None
             else None
         )
+        self._single_char_delim = (
+            build_delimiter_pattern(self.settings.single_char_punct)
+            if self.settings.single_char_strip
+            else None
+        )
 
     # ---------------- 对外入口 ----------------
 
@@ -334,6 +374,7 @@ class ThinkCleaner:
         dropped_paragraphs += removed
 
         new_text = "\n\n".join(paragraphs)
+        new_text, dropped_single_chars = self._strip_single_char_cells(new_text)
         return BlockResult(
             text=new_text,
             before=before,
@@ -343,9 +384,57 @@ class ThinkCleaner:
             dropped_paragraphs=dropped_paragraphs,
             dropped_lines=dropped_lines,
             dropped_sentences=dropped_sentences,
+            dropped_single_chars=dropped_single_chars,
         )
 
     # ---------------- 内部实现 ----------------
+
+    def _strip_single_char_cells(self, text: str) -> tuple[str, int]:
+        """删除「单字 + 标点」片段。
+
+        以配置的标点和换行作为分隔，凡是分隔符之间只剩一个字的片段，
+        连同它后面的分隔符一起删掉。``单字。`` / ``单字\\n`` 都算，
+        位于文本首尾的单字段同样处理。
+
+        分隔符若同时含标点和换行（如 ``。\\n\\n``），换行会被保留，
+        避免删除 ``不。`` 时把上下两段合并。
+        """
+        delim = self._single_char_delim
+        if delim is None or not text:
+            return text, 0
+
+        segments: list[tuple[str, str]] = []
+        position = 0
+        for match in delim.finditer(text):
+            segments.append((text[position : match.start()], match.group()))
+            position = match.end()
+        segments.append((text[position:], ""))
+
+        kept: list[str] = []
+        dropped = 0
+        for segment, separator in segments:
+            cell = segment.strip()
+            if len(cell) == 1 and not (
+                self.settings.single_char_protect_ascii
+                and cell.isascii()
+                and cell.isalnum()
+            ):
+                dropped += 1
+                # 分隔符若同时含标点和换行（如「。\n\n」），保留换行，
+                # 否则删掉「不。」会把上下两段并成一段。
+                if "\n" in separator and len(separator.strip("\n")) > 0:
+                    kept.append("\n" * separator.count("\n"))
+                continue
+            kept.append(segment + separator)
+
+        if not dropped:
+            return text, 0
+
+        result = "".join(kept)
+        result = _MULTI_SPACE.sub(" ", result)
+        result = _TRAILING_SPACES.sub("", result)
+        result = _MULTI_BLANK_LINE.sub("\n\n", result)
+        return result.strip(), dropped
 
     def _strip_line(self, line: str, hits: list[int]) -> str | None:
         """删词后的行文本；返回 None 表示整行丢弃。"""
